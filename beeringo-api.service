@@ -1,0 +1,12 @@
+[Unit]
+Description=Beeringo API Service
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/var/www/beerinfo
+ExecStart=/root/.pyenv/versions/3.11.9/bin/uvicorn beeringo-api:app --host 127.0.0.1 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

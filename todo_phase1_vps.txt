@@ -1,0 +1,34 @@
+BeerInfo-AutoCreate Phase 1 実装手順（VPS前提）
+
+1. VPS側のPython環境確認
+   - python3 --version
+   - 3.11.9 以上であることを確認
+
+2. Python API の配置
+   - /opt/beerinfo/csv_api.py を配置
+   - 必要なら /opt/beerinfo/README.md も配置
+
+3. 入力CSVの配置
+   - /tmp/beer-create.csv を準備
+   - 列: 管理番号, ビアガーデン名称, URL1, URL2
+
+4. API起動
+   - 実行コマンド:
+     BEER_CREATE_CSV=/tmp/beer-create.csv HOST=0.0.0.0 PORT=8080 python3 /opt/beerinfo/csv_api.py
+
+5. API確認
+   - curl http://127.0.0.1:8080/beergarden
+   - JSON形式で items 配列が返ることを確認
+
+6. Web画面配置
+   - /home/xymon/server/www/beerinfo-create.html を配置
+   - HTMLから /beergarden を呼び出し一覧を表示
+
+7. 連携確認
+   - ブラウザで beerinfo-create.html を表示
+   - 一覧取得ができることを確認
+
+8. 次フェーズへ
+   - Phase 2: 選択画面のUI実装
+   - Phase 3: n8n Webhook 設計
+   - Phase 4: Web情報取得

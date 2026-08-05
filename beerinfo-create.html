@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Beer Info Create</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  th, td { border: 1px solid #ccc; padding: 8px; }
+  th { background: #eee; }
+  td.checkbox-cell,
+  td.id-cell,
+  td.confidence-cell { text-align: center; }
+  .toolbar { margin-top: 20px; }
+  .toolbar button { margin-right: 8px; }
+  #manualTable input[type="text"] { width: 95%; box-sizing: border-box; }
+  #manualTable td.manual-id-cell input { width: 90%; }
+  #addManualRowBtn { margin-top: 8px; }
+  #execBtn { margin-top: 20px; }
+  #resultBox {
+    margin-top: 20px; padding: 10px; border: 1px solid #ccc;
+    max-height: 400px; overflow-y: auto;
+    font-family: monospace; font-size: 13px; white-space: pre-wrap;
+  }
+  #resultBox .log-line { padding: 2px 0; border-bottom: 1px dotted #eee; }
+  #resultBox .log-progress { color: #0066cc; }
+  #resultBox .log-done { color: #2e7d32; }
+  #resultBox .log-error { color: #c62828; font-weight: bold; }
+  #resultBox .log-ok { color: #2e7d32; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h2>Beer Info Create</h2>
+
+<div class="toolbar">
+  <button id="selectAllBtn">全て選択</button>
+  <button id="selectNoneBtn">選択解除</button>
+  <button id="filterMarkBtn">◎のみ表示</button>
+</div>
+
+<table id="beerTable"></table>
+
+<h3>手動追加</h3>
+<p style="font-size:13px;color:#666;">CSVに無い対象を手動で追加できます。ID は空欄で構いません（自動採番されます）。URL1 は必須です。</p>
+<table id="manualTable">
+  <tr><th>選択</th><th>ID</th><th>名称</th><th>URL1</th><th>URL2</th></tr>
+</table>
+<button id="addManualRowBtn">＋ 行を追加</button>
+
+<br>
+<button id="execBtn">選択したビアガーデン情報を取得</button>
+
+<div id="resultBox"></div>
+
+<script>
+const CSV_URL = "http://yazu.x5300.com:8888/beer-create.csv";
+
+fetch(CSV_URL)
+  .then(r => r.text())
+  .then(text => {
+    const lines = text.split(/\r\n|\n|\r/);
+    const table = document.getElementById("beerTable");
+
+    let html = "<tr><th>選択</th><th>ID</th><th>確度</th><th>名称</th></tr>";
+
+    lines.forEach((line, index) => {
+      if (index === 0) return;
+      if (!line.trim()) return;
+      const cols = line.split(",");
+      const id = cols[0];
+      const name = cols[1] || "";
+      const confidence = (cols[cols.length - 1] || "").trim();
+
+      html += `
+        <tr>
+          <td class="checkbox-cell"><input type="checkbox" value="${id}" data-confidence="${confidence}"></td>
+          <td class="id-cell">${id}</td>
+          <td class="confidence-cell">${confidence}</td>
+          <td>${name}</td>
+        </tr>
+      `;
+    });
+
+    table.innerHTML = html;
+  });
+
+// ① 全て選択／選択解除（表示中の行のみ対象）／◎のみ表示フィルター
+function visibleCheckboxes() {
+  return [...document.querySelectorAll("#beerTable input[type=checkbox]")]
+    .filter(cb => cb.closest("tr").style.display !== "none");
+}
+
+document.getElementById("selectAllBtn").onclick = () => {
+  visibleCheckboxes().forEach(cb => cb.checked = true);
+};
+document.getElementById("selectNoneBtn").onclick = () => {
+  visibleCheckboxes().forEach(cb => cb.checked = false);
+};
+
+let markFilterActive = false;
+document.getElementById("filterMarkBtn").onclick = () => {
+  markFilterActive = !markFilterActive;
+  document.querySelectorAll("#beerTable tr").forEach(tr => {
+    const cb = tr.querySelector("input[type=checkbox]");
+    if (!cb) return; // ヘッダー行はスキップ
+    const isMark = cb.dataset.confidence === "◎";
+    tr.style.display = (markFilterActive && !isMark) ? "none" : "";
+  });
+  document.getElementById("filterMarkBtn").textContent = markFilterActive ? "全て表示" : "◎のみ表示";
+};
+
+// ② 手動追加行
+let manualRowSeq = 0;
+
+function addManualRow() {
+  manualRowSeq += 1;
+  const tbody = document.getElementById("manualTable");
+  const tr = document.createElement("tr");
+  tr.className = "manual-row";
+  tr.innerHTML = `
+    <td class="checkbox-cell"><input type="checkbox" class="manual-checkbox" checked></td>
+    <td class="manual-id-cell"><input type="text" class="manual-id" placeholder="(自動)"></td>
+    <td><input type="text" class="manual-name" placeholder="名称"></td>
+    <td><input type="text" class="manual-url1" placeholder="https://..."></td>
+    <td><input type="text" class="manual-url2" placeholder="(任意)"></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+document.getElementById("addManualRowBtn").onclick = addManualRow;
+
+// 初期状態で空白行を1行用意しておく
+addManualRow();
+
+function collectManualItems() {
+  const items = [];
+  document.querySelectorAll("#manualTable tr.manual-row").forEach(tr => {
+    const checked = tr.querySelector(".manual-checkbox").checked;
+    const name = tr.querySelector(".manual-name").value.trim();
+    const url1 = tr.querySelector(".manual-url1").value.trim();
+    const url2 = tr.querySelector(".manual-url2").value.trim();
+    let id = tr.querySelector(".manual-id").value.trim();
+
+    // 何も入力されていない空白行はスキップ
+    if (!name && !url1 && !url2) return;
+    if (!checked) return;
+
+    if (!url1) {
+      alert(`手動追加行「${name || "(名称未入力)"}」に URL1 が入力されていません。`);
+      throw new Error("manual row missing url1");
+    }
+
+    if (!id) {
+      manualRowSeq += 1;
+      id = `manual-${Date.now()}-${manualRowSeq}`;
+    }
+
+    items.push({ id, name, url1, url2 });
+  });
+  return items;
+}
+
+function appendLog(data) {
+  const resultBox = document.getElementById("resultBox");
+  const line = document.createElement("div");
+  line.className = "log-line log-" + (data.status || "progress");
+
+  let text = "";
+  if (data.id) text += `[ID:${data.id}] `;
+  if (data.message) text += data.message;
+  if (data.step === "fetch" && data.status === "done" && data.ai_text) {
+    text += `\n  └ ai_text: ${data.ai_text.slice(0, 100)}${data.ai_text.length > 100 ? "…" : ""}`;
+  }
+  if ((data.step === "step1" || data.step === "step2") && data.status === "done" && data.result) {
+    text += `\n  └ ${JSON.stringify(data.result)}`;
+  }
+  if (data.step === "excel" && data.status === "done" && data.excel_path) {
+    text += `\n  └ 出力: ${data.excel_path}`;
+    if (data.onedrive_path) {
+      text += `\n  └ OneDrive: ${data.onedrive_path}`;
+    }
+  }
+
+  line.textContent = text;
+  resultBox.appendChild(line);
+  resultBox.scrollTop = resultBox.scrollHeight;
+}
+
+document.getElementById("execBtn").onclick = async () => {
+  const ids = [...document.querySelectorAll("#beerTable input[type=checkbox]:checked")]
+    .map(x => x.value);
+
+  let manualItems;
+  try {
+    manualItems = collectManualItems();
+  } catch (e) {
+    return; // アラート済みのため中断
+  }
+  const manualIds = manualItems.map(m => m.id);
+
+  const allIds = [...ids, ...manualIds];
+
+  if (allIds.length === 0) {
+    alert("対象が選択されていません");
+    return;
+  }
+
+  const resultBox = document.getElementById("resultBox");
+  resultBox.innerHTML = "";
+
+  const res = await fetch("/execute", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: allIds, manual_items: manualItems })
+  });
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        appendLog(JSON.parse(line));
+      } catch (e) {
+        appendLog({ message: line, status: "error" });
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    try { appendLog(JSON.parse(buffer)); } catch (e) { /* ignore */ }
+  }
+};
+</script>
+
+</body>
+</html>
