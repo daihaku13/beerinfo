@@ -1,0 +1,22 @@
+# 本番環境の秘密情報
+.env
+
+# ログ
+logs/
+log/
+*.log
+results/
+
+excel_output
+
+# キャッシュ
+__pycache__/
+*.pyc
+
+# 一時ファイル
+tmp/
+temp/
+
+# 実行時生成ファイル
+*.pid
+*.sock
