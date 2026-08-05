@@ -1,0 +1,28 @@
+name: Deploy Beerinfo API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update code
+        run: |
+          cd /var/www/beerinfo
+          git pull
+
+      - name: Install dependencies
+        run: |
+          pip install -r /var/www/beerinfo/requirements.txt
+
+      - name: Restart API service
+        run: |
+          sudo systemctl restart beeringo-api.service
+          sudo systemctl status beeringo-api.service --no-pager
