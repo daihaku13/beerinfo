@@ -10,7 +10,7 @@ beerinfo-create.html から呼ばれるメイン処理(FastAPI)。
          main.py
             ├─ beeringo_api.py          … ③ Webサイト取得・本文クリーニング
             ├─ step1_info_extraction.py … ④-1 情報整理(Claude API / Web検索なし)
-            ├─ step2_intro_creation.py  … ④-2 紹介文作成(OpenAI API / Web検索あり)
+            ├─ step2_intro_creation.py  … ④-2 紹介文作成(Claude API / Web検索あり)
             ├─ storage.py               … ログ・結果ファイル保存
             └─ excel_writer.py          … ⑤ Excel書き込み(全件処理後にまとめて実行)
 
@@ -20,7 +20,7 @@ beerinfo-create.html から呼ばれるメイン処理(FastAPI)。
 
 ■重要: ブロッキングI/Oのスレッド分離について
 extract_main_text()(requests)・step1_info_extraction()(anthropic SDK)・
-step2_intro_creation()(openai SDK)・write_to_excel()(openpyxl)は、いずれも
+step2_intro_creation()(anthropic SDK)・write_to_excel()(openpyxl)は、いずれも
 同期(ブロッキング)処理。async defの中で同期I/Oを直接呼ぶと、uvicornの
 イベントループ全体がブロックされ、他のリクエストは一切さばけなくなる
 (応答が届いていても後処理に進めず、見かけ上ハングしたようになる)。
@@ -121,8 +121,8 @@ async def execute(payload: dict):
                     yield _line({"id": id, "step": "complete", "status": "error", "message": f"{item['name']} の処理に失敗しました"})
                     continue
 
-                # ④-2 紹介文・ポイント作成(OpenAI API / Web検索あり)
-                yield _line({"id": id, "step": "step2", "status": "progress", "message": "OpenAI APIで紹介文を作成中..."})
+                # ④-2 紹介文・ポイント作成(Claude API / Web検索あり)
+                yield _line({"id": id, "step": "step2", "status": "progress", "message": "Claude APIで紹介文を作成中..."})
                 step2_result = await asyncio.to_thread(step2_intro_creation, step1_result)
                 await asyncio.to_thread(save_step_log, id, "step2_intro", step2_result)
                 yield _line({"id": id, "step": "step2", "status": "done", "message": "紹介文の作成が完了しました", "result": step2_result})

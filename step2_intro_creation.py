@@ -2,7 +2,7 @@
 """
 step2_intro_creation.py
 ========================
-④-2 紹介文・ポイント作成(OpenAI API / Web検索あり)
+④-2 紹介文・ポイント作成(Claude API / Web検索あり)
 step1_info_extraction() の抽出結果をもとに、紹介文とおすすめポイントを生成する。
 
 main.py からは以下のように呼び出す:
@@ -14,18 +14,13 @@ main.py からは以下のように呼び出す:
 import json
 import os
 
-from openai import (
-    APIConnectionError,
-    APIStatusError,
-    APITimeoutError,
-    OpenAI,
-)
+import anthropic
 
 # ---------------------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------------------
 
-OPENAI_MODEL = "gpt-4.1"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # API呼び出しが長時間ハングしないよう明示的にタイムアウトを設定(秒)
 # (Web検索ツールを使う分、step1より応答が長引きやすいため少し余裕を持たせる)
@@ -35,21 +30,23 @@ REQUEST_TIMEOUT = 90
 # なるため、リトライ回数を明示的に絞る(step1_info_extraction.pyと同じ方針)
 MAX_RETRIES = 1
 
-openai_client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
+MAX_TOKENS = 4096
+
+claude_client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
     timeout=REQUEST_TIMEOUT,
     max_retries=MAX_RETRIES,
 )
 
 
 # ---------------------------------------------------------------------------
-# ④-2 紹介文・ポイント作成(OpenAI API / Web検索あり)
+# ④-2 紹介文・ポイント作成(Claude API / Web検索あり)
 # ---------------------------------------------------------------------------
 
 def step2_intro_creation(step1_result: dict) -> dict:
     """
     ④-1の抽出結果(step1_result)をもとに、紹介文3本・おすすめポイント3点・
-    紹介URLをOpenAI API(Web検索あり)で生成する。
+    紹介URLをClaude API(Web検索あり)で生成する。
 
     Parameters
     ----------
@@ -90,24 +87,29 @@ def step2_intro_creation(step1_result: dict) -> dict:
 """
 
     try:
-        response = openai_client.responses.create(
-            model=OPENAI_MODEL,
-            tools=[{"type": "web_search"}],
-            input=prompt,
+        response = claude_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
             timeout=REQUEST_TIMEOUT,  # クライアント初期化時の設定に加え、呼び出し単位でも明示
         )
-    except APITimeoutError:
-        return {"error": "タイムアウト", "message": f"OpenAI APIの応答が{REQUEST_TIMEOUT}秒以内に得られませんでした"}
-    except APIConnectionError as e:
+    except anthropic.APITimeoutError:
+        return {"error": "タイムアウト", "message": f"Claude APIの応答が{REQUEST_TIMEOUT}秒以内に得られませんでした"}
+    except anthropic.APIConnectionError as e:
         return {"error": "接続エラー", "message": str(e)}
-    except APIStatusError as e:
+    except anthropic.APIStatusError as e:
         return {"error": "APIエラー", "message": f"status={e.status_code}: {e.message}"}
     except Exception as e:
         # 上記3種以外の予期しない例外(SDK内部エラー等)もここで確実に捕捉し、
         # main.py側のstream()ジェネレータ全体が停止するのを防ぐ
         return {"error": "予期しないエラー", "message": str(e)}
 
-    response_text = response.output_text.strip()
+    # response.content は text ブロックと server_tool_use / web_search_tool_result
+    # ブロックが混在しうるため、text ブロックのみを連結する
+    response_text = "".join(
+        block.text for block in response.content if block.type == "text"
+    ).strip()
 
     if response_text.startswith("```"):
         response_text = response_text.split("```")[1]
