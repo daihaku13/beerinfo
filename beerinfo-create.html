@@ -56,6 +56,44 @@
 <script>
 const CSV_URL = "http://yazu.x5300.com:8888/beer-create.csv";
 
+// 単純な split(",") だと、名称やURLにカンマが含まれるセル（ダブルクォートで
+// 囲まれている想定）で列がずれてしまうため、クォート対応の簡易CSVパーサーを使う。
+// 対応仕様: "..." で囲まれたフィールド内のカンマ・改行はそのまま値として扱い、
+// "" はエスケープされたダブルクォート1文字として展開する。
+function parseCsvLine(line) {
+  const cols = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        cols.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+  }
+  cols.push(cur);
+  return cols;
+}
+
 fetch(CSV_URL)
   .then(r => r.text())
   .then(text => {
@@ -67,7 +105,7 @@ fetch(CSV_URL)
     lines.forEach((line, index) => {
       if (index === 0) return;
       if (!line.trim()) return;
-      const cols = line.split(",");
+      const cols = parseCsvLine(line);
       const id = cols[0];
       const name = cols[1] || "";
       const confidence = (cols[cols.length - 1] || "").trim();

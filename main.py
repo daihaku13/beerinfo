@@ -73,50 +73,70 @@ async def execute(payload: dict):
                 yield _line({"id": id, "step": "error", "status": "error", "message": "CSVに該当データがありません"})
                 continue
 
-            yield _line({"id": id, "step": "start", "status": "progress", "message": f"{item['name']} の処理を開始します"})
+            # 1件の処理中に予期しない例外(ネットワーク瞬断・SDK内部エラー等)が
+            # 発生しても、そのIDだけ失敗として次のIDへ進めるようにする。
+            # ここで捕捉しないと、stream()ジェネレータ全体が停止し、
+            # 以降のIDが一切処理されなくなってしまうため。
+            try:
+                yield _line({"id": id, "step": "start", "status": "progress", "message": f"{item['name']} の処理を開始します"})
 
-            # ③ Webサイト情報取得・クリーニング
-            yield _line({"id": id, "step": "fetch", "status": "progress", "message": "Webサイト情報を取得中..."})
-            text1 = await asyncio.to_thread(extract_main_text, item["url1"])
-            text2 = await asyncio.to_thread(extract_main_text, item["url2"]) if item["url2"] else ""
+                # ③ Webサイト情報取得・クリーニング
+                yield _line({"id": id, "step": "fetch", "status": "progress", "message": "Webサイト情報を取得中..."})
+                text1 = await asyncio.to_thread(extract_main_text, item["url1"])
+                text2 = await asyncio.to_thread(extract_main_text, item["url2"]) if item["url2"] else ""
 
-            sections = []
-            if text1:
-                sections.append(f"【URL1本文】\n{text1}")
-            if text2:
-                sections.append(f"【URL2本文】\n{text2}")
+                sections = []
+                if text1:
+                    sections.append(f"【URL1本文】\n{text1}")
+                if text2:
+                    sections.append(f"【URL2本文】\n{text2}")
 
-            ai_text = f"【名称】{item['name']}\n" + "\n\n".join(sections)
-            save_step_log(id, "step0_ai_text", ai_text)
-            yield _line({"id": id, "step": "fetch", "status": "done", "message": "Webサイト情報の取得が完了しました", "ai_text": ai_text})
+                ai_text = f"【名称】{item['name']}\n" + "\n\n".join(sections)
+                await asyncio.to_thread(save_step_log, id, "step0_ai_text", ai_text)
+                yield _line({"id": id, "step": "fetch", "status": "done", "message": "Webサイト情報の取得が完了しました", "ai_text": ai_text})
 
-            # ④-1 情報整理(Claude API / Web検索なし)
-            yield _line({"id": id, "step": "step1", "status": "progress", "message": "Claude APIで情報整理中..."})
-            step1_result = await asyncio.to_thread(step1_info_extraction, ai_text)
-            save_step_log(id, "step1_info", step1_result)
-            yield _line({"id": id, "step": "step1", "status": "done", "message": "情報整理が完了しました", "result": step1_result})
+                # ④-1 情報整理(Claude API / Web検索なし)
+                yield _line({"id": id, "step": "step1", "status": "progress", "message": "Claude APIで情報整理中..."})
+                step1_result = await asyncio.to_thread(step1_info_extraction, ai_text)
+                await asyncio.to_thread(save_step_log, id, "step1_info", step1_result)
+                yield _line({"id": id, "step": "step1", "status": "done", "message": "情報整理が完了しました", "result": step1_result})
 
-            # ④-1が失敗している場合、そのまま④-2に渡すと誤ったデータで紹介文が
-            # 生成されてしまうため、ここで処理を打ち切ってエラーとして扱う
-            if isinstance(step1_result, dict) and step1_result.get("error"):
-                yield _line({
-                    "id": id, "step": "step2", "status": "skipped",
-                    "message": f"④-1でエラーが発生したため④-2をスキップしました: {step1_result.get('message', step1_result.get('error'))}"
-                })
-                yield _line({"id": id, "step": "complete", "status": "error", "message": f"{item['name']} の処理に失敗しました"})
+                # ④-1が失敗している場合、そのまま④-2に渡すと誤ったデータで紹介文が
+                # 生成されてしまうため、ここで処理を打ち切ってエラーとして扱う
+                if isinstance(step1_result, dict) and step1_result.get("error"):
+                    yield _line({
+                        "id": id, "step": "step2", "status": "skipped",
+                        "message": f"④-1でエラーが発生したため④-2をスキップしました: {step1_result.get('message', step1_result.get('error'))}"
+                    })
+                    yield _line({"id": id, "step": "complete", "status": "error", "message": f"{item['name']} の処理に失敗しました"})
+                    continue
+
+                # ④-2 紹介文・ポイント作成(OpenAI API / Web検索あり)
+                yield _line({"id": id, "step": "step2", "status": "progress", "message": "OpenAI APIで紹介文を作成中..."})
+                step2_result = await asyncio.to_thread(step2_intro_creation, step1_result)
+                await asyncio.to_thread(save_step_log, id, "step2_intro", step2_result)
+                yield _line({"id": id, "step": "step2", "status": "done", "message": "紹介文の作成が完了しました", "result": step2_result})
+
+                # ④-2が失敗している場合、空欄だらけのExcelシートができてしまうため、
+                # ④-1と同様にここで処理を打ち切ってエラーとして扱う
+                if isinstance(step2_result, dict) and step2_result.get("error"):
+                    yield _line({
+                        "id": id, "step": "complete", "status": "error",
+                        "message": f"④-2でエラーが発生したため{item['name']} の処理に失敗しました: {step2_result.get('message', step2_result.get('error'))}"
+                    })
+                    continue
+
+                # 管理番号別の最終結果ファイル(Excel転記用)。統合済みdictも受け取っておく
+                consolidated = await asyncio.to_thread(
+                    save_consolidated_result, id, item["name"], item["url1"], step1_result, step2_result
+                )
+                consolidated_results.append(consolidated)
+
+                yield _line({"id": id, "step": "complete", "status": "ok", "message": f"{item['name']} の処理が完了しました"})
+
+            except Exception as e:
+                yield _line({"id": id, "step": "error", "status": "error", "message": f"予期しないエラーが発生したため{item['name']} の処理をスキップしました: {e}"})
                 continue
-
-            # ④-2 紹介文・ポイント作成(OpenAI API / Web検索あり)
-            yield _line({"id": id, "step": "step2", "status": "progress", "message": "OpenAI APIで紹介文を作成中..."})
-            step2_result = await asyncio.to_thread(step2_intro_creation, step1_result)
-            save_step_log(id, "step2_intro", step2_result)
-            yield _line({"id": id, "step": "step2", "status": "done", "message": "紹介文の作成が完了しました", "result": step2_result})
-
-            # 管理番号別の最終結果ファイル(Excel転記用)。統合済みdictも受け取っておく
-            consolidated = save_consolidated_result(id, item["name"], item["url1"], step1_result, step2_result)
-            consolidated_results.append(consolidated)
-
-            yield _line({"id": id, "step": "complete", "status": "ok", "message": f"{item['name']} の処理が完了しました"})
 
         # ⑤ Excel書き込み(全件処理が終わった後にまとめて1回書き込む)
         if consolidated_results:

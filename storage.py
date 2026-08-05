@@ -40,6 +40,19 @@ def save_step_log(id, step_name, content):
     return str(filename)
 
 
+def _combine_beer_type_and_venue(step1_result):
+    """ビアタイプと開催場所(収容人数)を「ビアタイプ / 開催場所(収容人数)」形式で結合する。
+    Excelテンプレート側に開催場所(収容人数)専用のセルが無いため、ビアタイプの
+    セル(B22)にまとめて書き込む方針(2026年08月合意)。どちらか一方しか値が
+    無い場合は " / " を付けず、単独の値のみを返す。"""
+    beer_type = (step1_result.get("ビアタイプ", "") or "").strip()
+    venue = (step1_result.get("開催場所(収容人数)", "") or "").strip()
+
+    if beer_type and venue:
+        return f"{beer_type} / {venue}"
+    return beer_type or venue
+
+
 def build_consolidated_dict(id, name, url1, step1_result, step2_result):
     """AIが整理・作成した情報を、Excelセルマッピングに沿ったキー名でdict化する"""
     return {
@@ -54,10 +67,9 @@ def build_consolidated_dict(id, name, url1, step1_result, step2_result):
         "営業時間": step1_result.get("営業時間", ""),
         "定休日": step1_result.get("定休日", ""),
         "雨天営業": step1_result.get("雨天営業", ""),
-        "ビアタイプ": step1_result.get("ビアタイプ", ""),
+        "ビアタイプ": _combine_beer_type_and_venue(step1_result),
         "概要": step1_result.get("概要", ""),
         "システム": step1_result.get("システム", ""),
-        "開催場所(収容人数)": step1_result.get("開催場所(収容人数)", ""),
         "料金(税込)": step1_result.get("料金(税込)", ""),
         "料理情報": step1_result.get("料理内容", ""),
         "ドリンク": step1_result.get("ドリンク内容", ""),

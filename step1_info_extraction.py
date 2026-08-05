@@ -148,6 +148,10 @@ def step1_info_extraction(ai_text: str) -> dict:
         return {"error": "接続エラー", "message": str(e)}
     except anthropic.APIStatusError as e:
         return {"error": "APIエラー", "message": f"status={e.status_code}: {e.message}"}
+    except Exception as e:
+        # 上記3種以外の予期しない例外(SDK内部エラー等)もここで確実に捕捉し、
+        # main.py側のstream()ジェネレータ全体が停止するのを防ぐ
+        return {"error": "予期しないエラー", "message": str(e)}
 
     response_text = "".join(
         block.text for block in message.content if block.type == "text"

@@ -14,7 +14,12 @@ main.py からは以下のように呼び出す:
 import json
 import os
 
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+)
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -22,7 +27,19 @@ from openai import OpenAI
 
 OPENAI_MODEL = "gpt-4.1"
 
-openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+# API呼び出しが長時間ハングしないよう明示的にタイムアウトを設定(秒)
+# (Web検索ツールを使う分、step1より応答が長引きやすいため少し余裕を持たせる)
+REQUEST_TIMEOUT = 90
+
+# SDKのデフォルト自動リトライが積み重なると「90秒のはずが数分かかる」原因に
+# なるため、リトライ回数を明示的に絞る(step1_info_extraction.pyと同じ方針)
+MAX_RETRIES = 1
+
+openai_client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    timeout=REQUEST_TIMEOUT,
+    max_retries=MAX_RETRIES,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,11 +89,23 @@ def step2_intro_creation(step1_result: dict) -> dict:
 {json.dumps(step1_result, ensure_ascii=False, indent=2)}
 """
 
-    response = openai_client.responses.create(
-        model=OPENAI_MODEL,
-        tools=[{"type": "web_search"}],
-        input=prompt
-    )
+    try:
+        response = openai_client.responses.create(
+            model=OPENAI_MODEL,
+            tools=[{"type": "web_search"}],
+            input=prompt,
+            timeout=REQUEST_TIMEOUT,  # クライアント初期化時の設定に加え、呼び出し単位でも明示
+        )
+    except APITimeoutError:
+        return {"error": "タイムアウト", "message": f"OpenAI APIの応答が{REQUEST_TIMEOUT}秒以内に得られませんでした"}
+    except APIConnectionError as e:
+        return {"error": "接続エラー", "message": str(e)}
+    except APIStatusError as e:
+        return {"error": "APIエラー", "message": f"status={e.status_code}: {e.message}"}
+    except Exception as e:
+        # 上記3種以外の予期しない例外(SDK内部エラー等)もここで確実に捕捉し、
+        # main.py側のstream()ジェネレータ全体が停止するのを防ぐ
+        return {"error": "予期しないエラー", "message": str(e)}
 
     response_text = response.output_text.strip()
 

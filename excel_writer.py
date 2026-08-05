@@ -45,6 +45,7 @@ excel_writer.py
 
 import re
 import shutil
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -163,8 +164,12 @@ def write_to_excel(consolidated_results: list, template_path: str = TEMPLATE_PAT
     # 元のtemplateシートはひな形として残しておく(削除したい場合は下記を有効化)
     # wb.remove(template_ws)
 
+    # 秒精度のタイムスタンプだけだと、複数実行が同じ秒に完了した場合に
+    # ファイル名が衝突し、片方の結果が上書きされてしまうため、
+    # 短い一意な識別子(uuid4の先頭8文字)を付加して衝突を防ぐ
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = EXCEL_OUTPUT_DIR / f"BeerInfo_{timestamp}.xlsm"
+    unique_suffix = uuid.uuid4().hex[:8]
+    output_path = EXCEL_OUTPUT_DIR / f"BeerInfo_{timestamp}_{unique_suffix}.xlsm"
     wb.save(output_path)
 
     # OneDrive同期フォルダへコピー(失敗してもExcel本体の作成自体は成功扱いとする)
