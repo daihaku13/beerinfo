@@ -22,6 +22,15 @@ from bs4 import BeautifulSoup
 
 CSV_PATH = "/var/www/8888/beer-create.csv"
 
+# 404/500エラーページやBot対策で弾かれるサイトが多いため、汎用的なブラウザの
+# UAを明示しておく(デフォルトのpython-requests/x.x UAだと403で弾かれることがある)
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+}
+
 SKIP_DOMAINS = ('x.com', 'twitter.com', 'facebook.com', 'fb.com', 'instagram.com')
 
 BOILERPLATE_LINES = {
@@ -126,8 +135,15 @@ def remove_zero_width_chars(text):
     return re.sub(r'[\u200B-\u200F\u202A-\u202E\uFEFF]+', '', text)
 
 
-def dedupe_exact_blocks(text, block_marker_start='drinks', block_marker_end='set'):
-    """block_marker_start〜block_marker_end間の完全一致ブロックが複数回出た場合、2回目以降を省略"""
+def dedupe_exact_blocks(text, block_marker_start='drinks', block_marker_end='set', min_block_lines=3):
+    """block_marker_start〜block_marker_end間の完全一致ブロックが複数回出た場合、2回目以降を省略。
+
+    注意: block_marker_start/endは特定サイト(英語UIの飲み放題メニュー等)向けの
+    マーカーであり、他サイトの本文中に偶然 "drinks" や "set" が単独行として
+    出現した場合、無関係な内容を誤って重複ブロックとみなすリスクがある。
+    誤爆を減らすため、ブロック行数がmin_block_lines未満の短いブロックは
+    重複除去の対象外とする。
+    """
     lines = text.split('\n')
     blocks = []
     result = []
@@ -141,7 +157,9 @@ def dedupe_exact_blocks(text, block_marker_start='drinks', block_marker_end='set
                 block_lines.append(lines[j])
                 j += 1
             block_text = '\n'.join(block_lines)
-            if block_text in blocks:
+            if len(block_lines) < min_block_lines:
+                result.extend(block_lines)
+            elif block_text in blocks:
                 result.append('（飲み放題内容は共通のため省略。詳細は初出箇所を参照）')
             else:
                 blocks.append(block_text)
@@ -278,44 +296,54 @@ def load_csv(csv_path: str = CSV_PATH) -> dict:
 
 
 def extract_main_text(url: str) -> str:
-    """指定URLのページ本文を取得し、一連のクリーニング処理を適用して返す"""
+    """指定URLのページ本文を取得し、一連のクリーニング処理を適用して返す。
+
+    取得失敗(タイムアウト・接続エラー・4xx/5xx等)時は例外をそのまま送出する。
+    以前は例外をここで捕まえて "ERROR: ..." という文字列を返していたが、
+    main.py側がこの文字列を正常な本文として扱いClaude APIに渡してしまうため、
+    取得失敗が「情報が少ないだけ」に見えてしまう問題があった。
+    呼び出し元(main.py)で捕捉し、そのIDの処理を明示的に失敗として扱う。
+    """
     if not url:
         return ""
 
     if should_skip_url(url):
         return ""
 
-    try:
-        r = requests.get(url, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+    r = requests.get(url, timeout=10, headers=REQUEST_HEADERS)
+    r.raise_for_status()
 
-        for tag in soup(["header", "footer", "nav", "aside", "script", "style"]):
-            tag.decompose()
+    # Content-Typeにcharset指定が無い日本語サイトで文字化けするのを防ぐため、
+    # requestsの自動推定(apparent_encoding)で上書きする
+    if not r.encoding or r.encoding.lower() == "iso-8859-1":
+        r.encoding = r.apparent_encoding
 
-        text = soup.get_text(separator="\n")
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
-        text = "\n".join(lines)
-        text = remove_hashtags(text)
-        text = remove_boilerplate(text)
-        text = remove_currency_language_menu(text)
-        text = remove_html_attr_residue(text)
-        text = remove_instagram_feed(text)
-        text = remove_zero_width_chars(text)
-        text = dedupe_exact_blocks(text)
-        text = remove_emoji(text)
-        text = merge_vertical_text(text)
-        text = remove_calendar_numbers(text)
-        text = remove_image_paths(text)
-        text = remove_urls(text)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-        json_fields = extract_json_useful_fields(text)
-        text = remove_json_blocks(text)
-        text = remove_english_heavy_lines(text)
+    for tag in soup(["header", "footer", "nav", "aside", "script", "style"]):
+        tag.decompose()
 
-        if json_fields:
-            text = text + "\n" + "\n".join(json_fields)
+    text = soup.get_text(separator="\n")
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    text = "\n".join(lines)
+    text = remove_hashtags(text)
+    text = remove_boilerplate(text)
+    text = remove_currency_language_menu(text)
+    text = remove_html_attr_residue(text)
+    text = remove_instagram_feed(text)
+    text = remove_zero_width_chars(text)
+    text = dedupe_exact_blocks(text)
+    text = remove_emoji(text)
+    text = merge_vertical_text(text)
+    text = remove_calendar_numbers(text)
+    text = remove_image_paths(text)
+    text = remove_urls(text)
 
-        return text
+    json_fields = extract_json_useful_fields(text)
+    text = remove_json_blocks(text)
+    text = remove_english_heavy_lines(text)
 
-    except Exception as e:
-        return f"ERROR: {e}"
+    if json_fields:
+        text = text + "\n" + "\n".join(json_fields)
+
+    return text

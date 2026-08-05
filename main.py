@@ -82,8 +82,18 @@ async def execute(payload: dict):
 
                 # ③ Webサイト情報取得・クリーニング
                 yield _line({"id": id, "step": "fetch", "status": "progress", "message": "Webサイト情報を取得中..."})
+                # URL1は必須情報のため、取得失敗時はこのtry節を抜けて
+                # 外側のexcept(このIDの処理全体を失敗扱い)に委ねる
                 text1 = await asyncio.to_thread(extract_main_text, item["url1"])
-                text2 = await asyncio.to_thread(extract_main_text, item["url2"]) if item["url2"] else ""
+
+                # URL2は任意項目のため、取得に失敗してもID全体は失敗にせず、
+                # 空文字として扱って処理を続行する(警告ログのみ出す)
+                text2 = ""
+                if item["url2"]:
+                    try:
+                        text2 = await asyncio.to_thread(extract_main_text, item["url2"])
+                    except Exception as e:
+                        yield _line({"id": id, "step": "fetch", "status": "progress", "message": f"URL2の取得に失敗したためスキップします: {e}"})
 
                 sections = []
                 if text1:
