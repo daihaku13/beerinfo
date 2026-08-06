@@ -12,9 +12,27 @@ main.py からは以下のように呼び出す:
 
 import csv
 import re
+from io import BytesIO
 
 import requests
 from bs4 import BeautifulSoup
+
+# 画像OCR・PDFテキスト抽出は追加の外部ライブラリに依存するため、
+# 未インストール環境でも本体(HTML取得・クリーニング)は動作できるようガードする。
+# 必要パッケージ: pip install pytesseract pillow pdfplumber
+#                + サーバー側にtesseract-ocr・tesseract-ocr-jpn(aptパッケージ)
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
+try:
+    import pdfplumber
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # 設定
@@ -65,6 +83,12 @@ JSON_KEY_LABELS = {
     'address': '所在地',
     'base': '料金',
 }
+
+# ①本文が短く「情報が少ない」とみなす閾値・スキャン対象の絞り込み設定
+LOW_CONTENT_THRESHOLD = 500  # この文字数未満なら画像・PDFスキャンを追加実施
+MAX_IMAGES_TO_SCAN = 3        # OCR対象にする画像の最大枚数(上位N枚のみ、負荷対策)
+MAX_PDFS_TO_SCAN = 2          # テキスト抽出対象にするPDFの最大件数
+OCR_LANG = "jpn+eng"
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +292,94 @@ def remove_english_heavy_lines(text, ratio_threshold=0.5, min_len=20):
 
 
 # ---------------------------------------------------------------------------
-# CSV読み込み・本文取得
+# ①情報が少ない場合の補完: 画像OCR・PDFテキスト抽出
 # ---------------------------------------------------------------------------
+
+def extract_image_urls(html, base_url):
+    """ページ内の画像URL(jpg/png/gif/webp)を抽出する。並び順は出現順。"""
+    from urllib.parse import urljoin
+    soup = BeautifulSoup(html, "html.parser")
+    urls = []
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src:
+            continue
+        full_url = urljoin(base_url, src)
+        if full_url.lower().split("?")[0].endswith((".png", ".jpg", ".jpeg", ".webp")):
+            urls.append(full_url)
+    return urls
+
+
+def extract_pdf_urls(html, base_url):
+    """ページ内のPDFリンク(<a href="...pdf">)を抽出する。並び順は出現順。"""
+    from urllib.parse import urljoin
+    soup = BeautifulSoup(html, "html.parser")
+    urls = []
+    for a in soup.find_all("a"):
+        href = a.get("href")
+        if not href:
+            continue
+        if href.lower().split("?")[0].endswith(".pdf"):
+            urls.append(urljoin(base_url, href))
+    return urls
+
+
+def ocr_image_text(image_url):
+    """画像URLを取得し、tesseractでOCRしてテキストを返す(失敗時は空文字)。"""
+    if not OCR_AVAILABLE:
+        print("[WARN] OCR機能は無効です(pytesseract/PIL未インストール):", image_url)
+        return ""
+    try:
+        resp = requests.get(image_url, timeout=10, headers=REQUEST_HEADERS)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content))
+        return pytesseract.image_to_string(img, lang=OCR_LANG).strip()
+    except Exception as e:
+        print("[WARN] 画像OCR失敗:", image_url, e)
+        return ""
+
+
+def extract_pdf_text(pdf_url):
+    """PDF URLを取得し、pdfplumberでテキストを抽出して返す(失敗時は空文字)。
+    注意: スキャン画像だけのPDF(文字レイヤーが無いもの)からはテキストが
+    取れないため、その場合は空文字のままになる(OCR化は今回のスコープ外)。"""
+    if not PDF_AVAILABLE:
+        print("[WARN] PDF抽出機能は無効です(pdfplumber未インストール):", pdf_url)
+        return ""
+    try:
+        resp = requests.get(pdf_url, timeout=15, headers=REQUEST_HEADERS)
+        resp.raise_for_status()
+        texts = []
+        with pdfplumber.open(BytesIO(resp.content)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    texts.append(page_text)
+        return "\n".join(texts).strip()
+    except Exception as e:
+        print("[WARN] PDFテキスト抽出失敗:", pdf_url, e)
+        return ""
+
+
+def scan_images_and_pdfs(html, base_url):
+    """情報が少ない場合の補完用: 上位MAX_IMAGES_TO_SCAN枚の画像OCR結果と
+    上位MAX_PDFS_TO_SCAN件のPDFテキストをまとめて返す(見つからなければ空文字)。"""
+    sections = []
+
+    image_urls = extract_image_urls(html, base_url)[:MAX_IMAGES_TO_SCAN]
+    for image_url in image_urls:
+        text = ocr_image_text(image_url)
+        if text:
+            sections.append(f"【画像OCR: {image_url}】\n{text}")
+
+    pdf_urls = extract_pdf_urls(html, base_url)[:MAX_PDFS_TO_SCAN]
+    for pdf_url in pdf_urls:
+        text = extract_pdf_text(pdf_url)
+        if text:
+            sections.append(f"【PDF抽出: {pdf_url}】\n{text}")
+
+    return "\n\n".join(sections)
+
 
 def load_csv(csv_path: str = CSV_PATH) -> dict:
     """対象ビアガーデン一覧CSVを読み込み、idをキーとしたdictで返す。
@@ -345,5 +455,12 @@ def extract_main_text(url: str) -> str:
 
     if json_fields:
         text = text + "\n" + "\n".join(json_fields)
+
+    # ①本文が短く「情報が少ない」場合、画像OCR・PDFテキストで補完する
+    if len(text) < LOW_CONTENT_THRESHOLD:
+        print(f"[LOG] 本文が{LOW_CONTENT_THRESHOLD}文字未満({len(text)}文字)のため画像・PDFスキャンを実施:", url)
+        supplement = scan_images_and_pdfs(r.text, url)
+        if supplement:
+            text = text + "\n\n" + supplement
 
     return text

@@ -15,14 +15,14 @@ jobs:
 
       - name: Update code
         run: |
-          cd /var/www/beerinfo
+          cd /opt/beerinfo
           git pull
 
       - name: Install dependencies
         run: |
-          pip install -r /var/www/beerinfo/requirements.txt
+          pip install -r /opt/beerinfo/requirements.txt
 
       - name: Restart API service
         run: |
-          sudo systemctl restart beeringo-api.service
-          sudo systemctl status beeringo-api.service --no-pager
+          sudo systemctl restart beerinfo-api.service
+          sudo systemctl status beerinfo-api.service --no-pager

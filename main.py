@@ -41,6 +41,19 @@ from step3_excel_writer import write_to_excel
 
 app = FastAPI()
 
+# ②step1_info_extraction()が返す11項目のうち、空欄(未取得)が
+# この件数以上ある場合は情報が乏しいと判断し、④-2以降の処理を中止する
+STEP1_REQUIRED_FIELDS = [
+    "開催期間", "営業時間", "定休日", "雨天営業", "ビアタイプ", "概要",
+    "システム", "開催場所(収容人数)", "料金(税込)", "料理内容", "ドリンク内容",
+]
+STEP1_ABORT_THRESHOLD = 5
+
+
+def _count_missing_fields(step1_result: dict) -> int:
+    """step1_result のうち、STEP1_REQUIRED_FIELDS で空欄(未取得)の項目数を返す"""
+    return sum(1 for key in STEP1_REQUIRED_FIELDS if not (step1_result.get(key) or "").strip())
+
 
 def _line(payload: dict) -> str:
     """NDJSONの1行分を生成する"""
@@ -119,6 +132,17 @@ async def execute(payload: dict):
                         "message": f"④-1でエラーが発生したため④-2をスキップしました: {step1_result.get('message', step1_result.get('error'))}"
                     })
                     yield _line({"id": id, "step": "complete", "status": "error", "message": f"{item['name']} の処理に失敗しました"})
+                    continue
+
+                # ②抽出11項目のうち一定数(STEP1_ABORT_THRESHOLD)以上が空欄の場合、
+                # 情報が乏しすぎると判断し④-2以降をスキップする
+                missing_count = _count_missing_fields(step1_result) if isinstance(step1_result, dict) else len(STEP1_REQUIRED_FIELDS)
+                if missing_count >= STEP1_ABORT_THRESHOLD:
+                    yield _line({
+                        "id": id, "step": "step2", "status": "skipped",
+                        "message": f"抽出項目{len(STEP1_REQUIRED_FIELDS)}件中{missing_count}件が空欄のため④-2をスキップしました"
+                    })
+                    yield _line({"id": id, "step": "complete", "status": "error", "message": f"{item['name']} は情報が不足しているため処理を中止しました"})
                     continue
 
                 # ④-2 紹介文・ポイント作成(Claude API / Web検索あり)

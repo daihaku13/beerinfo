@@ -54,12 +54,15 @@ def _combine_beer_type_and_venue(step1_result):
 
 
 def build_consolidated_dict(id, name, url1, step1_result, step2_result):
-    """AIが整理・作成した情報を、Excelセルマッピングに沿ったキー名でdict化する"""
+    """AIが整理・作成した情報を、Excelセルマッピングに沿ったキー名でdict化する。
+    2026年08月合意: 公式URL欄への記載は不要とし、ビア紹介URL欄には
+    情報収集パイプライン(BeerinfoGathering.py)側で確度が最も高いと判定された
+    URL(=url1)を記載する方針に変更(以前はstep2のWeb検索結果を使用していた)。"""
     return {
         "管理番号": id,
         "ビア名称": name,
-        "公式URL": url1,
-        "ビア紹介URL": step2_result.get("ビア紹介URL", ""),
+        "公式URL": "",
+        "ビア紹介URL": url1,
         "紹介１": step2_result.get("紹介文1", ""),
         "紹介２": step2_result.get("紹介文2", ""),
         "紹介３": step2_result.get("紹介文3", ""),
