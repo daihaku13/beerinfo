@@ -56,10 +56,10 @@ from openpyxl import load_workbook
 # ---------------------------------------------------------------------------
 
 # テンプレートファイルのパス・シート名は環境に合わせて変更してください。
-TEMPLATE_PATH = "/var/www/beerinfo/templates/BeerInfo-template.xlsm"
+TEMPLATE_PATH = "/opt/beerinfo/templates/BeerInfo-template.xlsm"
 TEMPLATE_SHEET_NAME = "template"
 
-EXCEL_OUTPUT_DIR = Path("/var/www/beerinfo/excel_output")
+EXCEL_OUTPUT_DIR = Path("/opt/beerinfo/excel_output")
 EXCEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Excel作成後、OneDrive同期フォルダへも自動コピーする

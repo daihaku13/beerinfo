@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 User=root
-WorkingDirectory=/var/www/beerinfo
+WorkingDirectory=/opt/beerinfo
 ExecStart=/root/.pyenv/versions/3.11.9/bin/uvicorn main:app --host 127.0.0.1 --port 8080
 Restart=always
 

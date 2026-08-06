@@ -18,8 +18,8 @@ from datetime import datetime
 # 設定
 # ---------------------------------------------------------------------------
 
-LOG_DIR = Path("/var/www/beerinfo/logs")
-RESULT_DIR = Path("/var/www/beerinfo/results")
+LOG_DIR = Path("/opt/beerinfo/logs")
+RESULT_DIR = Path("/opt/beerinfo/results")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
