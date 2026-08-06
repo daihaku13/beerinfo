@@ -8,11 +8,11 @@ beerinfo-create.html から呼ばれるメイン処理(FastAPI)。
     beerinfo-create.html
             ↓ POST /execute
          main.py
-            ├─ beeringo_api.py          … ③ Webサイト取得・本文クリーニング
+            ├─ step0_fetch_and_clean.py … ③ Webサイト取得・本文クリーニング
             ├─ step1_info_extraction.py … ④-1 情報整理(Claude API / Web検索なし)
             ├─ step2_intro_creation.py  … ④-2 紹介文作成(Claude API / Web検索あり)
-            ├─ storage.py               … ログ・結果ファイル保存
-            └─ excel_writer.py          … ⑤ Excel書き込み(全件処理後にまとめて実行)
+            ├─ result_storage.py        … ログ・結果ファイル保存
+            └─ step3_excel_writer.py    … ⑤ Excel書き込み(全件処理後にまとめて実行)
 
 /execute はNDJSON(1行1JSON)でストリーミング応答する。各ステップが完了するたびに
 1行ずつ進捗をレスポンスに書き出すため、beerinfo-create.html側で途中経過を
@@ -33,11 +33,11 @@ import json
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
-from beeringo_api import load_csv, extract_main_text
+from step0_fetch_and_clean import load_csv, extract_main_text
 from step1_info_extraction import step1_info_extraction
 from step2_intro_creation import step2_intro_creation
-from storage import save_step_log, save_consolidated_result
-from excel_writer import write_to_excel
+from result_storage import save_step_log, save_consolidated_result
+from step3_excel_writer import write_to_excel
 
 app = FastAPI()
 
